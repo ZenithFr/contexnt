@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from mcp.server.fastmcp import FastMCP
 import aiosqlite
 
-from src.db import init_db
+from src.db import init_db, get_db, close_db
 from src.obsidian import init_obsidian_vault, write_context_payload
 from src.skills import index_skills_on_startup
 from src.overseer import overseer_loop
@@ -53,6 +53,7 @@ async def mcp_lifespan(app: FastMCP):
     shutdown_event.set()
     if overseer_task:
         await overseer_task
+    await close_db()
     logger.info("Server shutdown complete.")
 
 # Instantiation
@@ -75,42 +76,45 @@ async def consult_contextnt(prompt: str, session_id: Optional[str] = None) -> di
         session_id = str(uuid.uuid4())
         
     # 2. Update session metadata for Overseer idle-detection
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "INSERT OR REPLACE INTO session_metadata (session_id, last_active) VALUES (?, CURRENT_TIMESTAMP)",
-            (session_id,)
-        )
-        await db.commit()
+    db = get_db()
+    await db.execute(
+        "INSERT OR REPLACE INTO session_metadata (session_id, last_active) VALUES (?, CURRENT_TIMESTAMP)",
+        (session_id,)
+    )
+    await db.commit()
         
     # 3. Invoke Manager Graph with Checkpointer
-    async with AsyncSqliteSaver.from_conn_string(DB_PATH) as checkpointer:
-        graph = compile_manager_graph(checkpointer=checkpointer)
-        config = {"configurable": {"thread_id": session_id}}
+    checkpointer = AsyncSqliteSaver(db)
+    graph = compile_manager_graph(checkpointer=checkpointer)
+    config = {"configurable": {"thread_id": session_id}}
+    
+    # Check current turn_count and index counts
+    state_snapshot = await graph.aget_state(config)
+    if state_snapshot.values:
+        current_turn = state_snapshot.values.get("turn_count", 0)
+        next_turn = current_turn + 1
+        manager_index = state_snapshot.values.get("manager_index", 1)
+        librarian_index = state_snapshot.values.get("librarian_index", 1)
+        goal = state_snapshot.values.get("goal") or prompt
+        existing_messages = state_snapshot.values.get("messages") or []
+        new_messages = existing_messages + [HumanMessage(content=prompt)]
+    else:
+        next_turn = 1
+        manager_index = 1
+        librarian_index = 1
+        goal = prompt
+        new_messages = [HumanMessage(content=prompt)]
         
-        # Check current turn_count and index counts
-        state_snapshot = await graph.aget_state(config)
-        if state_snapshot.values:
-            current_turn = state_snapshot.values.get("turn_count", 0)
-            next_turn = current_turn + 1
-            manager_index = state_snapshot.values.get("manager_index", 1)
-            librarian_index = state_snapshot.values.get("librarian_index", 1)
-            goal = state_snapshot.values.get("goal") or prompt
-        else:
-            next_turn = 1
-            manager_index = 1
-            librarian_index = 1
-            goal = prompt
-            
-        inputs = {
-            "messages": [HumanMessage(content=prompt)],
-            "turn_count": next_turn,
-            "manager_index": manager_index,
-            "librarian_index": librarian_index,
-            "goal": goal,
-            "session_id": session_id
-        }
-        
-        outputs = await graph.ainvoke(inputs, config)
+    inputs = {
+        "messages": new_messages,
+        "turn_count": next_turn,
+        "manager_index": manager_index,
+        "librarian_index": librarian_index,
+        "goal": goal,
+        "session_id": session_id
+    }
+    
+    outputs = await graph.ainvoke(inputs, config)
         
     # 4. Extract final response message
     output_messages = outputs.get("messages") or []

@@ -37,8 +37,9 @@ class LibrarianState(TypedDict):
 
 # 2. Helper Functions
 def count_tokens(messages: list[BaseMessage]) -> int:
-    num_tokens = 0
+    num_tokens = 3  # Overhead per completion
     for message in messages:
+        num_tokens += 3  # Overhead per message
         if message.content:
             if isinstance(message.content, str):
                 num_tokens += len(TOKENIZER.encode(message.content))
@@ -54,16 +55,20 @@ def count_tokens(messages: list[BaseMessage]) -> int:
                     num_tokens += len(TOKENIZER.encode(tc["name"]))
     return num_tokens
 
+_llm_cache = {}
+
 def get_llm(temperature: float = 0.3):
-    api_key = os.getenv("OPENAI_API_KEY", "freellmapi-1e53eb0c02156d62c5660ddcd5fd7e8d674b6bcc77c6dc38")
-    api_base = os.getenv("OPENAI_API_BASE", "http://10.0.0.4:5001/v1")
-    model_name = os.getenv("OPENAI_MODEL_NAME", "llama-3.3-70b-versatile")
-    return ChatOpenAI(
-        model=model_name,
-        openai_api_key=api_key,
-        openai_api_base=api_base,
-        temperature=temperature
-    )
+    if temperature not in _llm_cache:
+        api_key = os.getenv("OPENAI_API_KEY", "freellmapi-1e53eb0c02156d62c5660ddcd5fd7e8d674b6bcc77c6dc38")
+        api_base = os.getenv("OPENAI_API_BASE", "http://10.0.0.4:5001/v1")
+        model_name = os.getenv("OPENAI_MODEL_NAME", "llama-3.3-70b-versatile")
+        _llm_cache[temperature] = ChatOpenAI(
+            model=model_name,
+            openai_api_key=api_key,
+            openai_api_base=api_base,
+            temperature=temperature
+        )
+    return _llm_cache[temperature]
 
 # 3. Librarian Subgraph Tools and Nodes
 def create_scan_shelf_tool(db_path: str):
@@ -76,30 +81,32 @@ def create_scan_shelf_tool(db_path: str):
         Scans a specific bookshelf namespace (e.g. 'coding/python') for skills.
         Optionally filters matching skills containing the keyword.
         """
-        import aiosqlite
+        from src.db import get_db
         
         # 1. Extract session_id (thread_id) from config
         session_id = "default"
         if config and "configurable" in config:
             session_id = config["configurable"].get("thread_id", "default")
             
-        # 2. Check hotbar_cache first (O(1) hit)
         filepaths = []
-        async with aiosqlite.connect(db_path) as db:
-            async with db.execute("SELECT skills_list FROM hotbar_cache WHERE namespace = ?", (namespace,)) as cursor:
-                row = await cursor.fetchone()
-            if row:
-                try:
-                    filepaths = json.loads(row[0])
-                    logger.info(f"scan_shelf: O(1) Hotbar Cache Hit for namespace '{namespace}'")
-                except Exception as e:
-                    logger.error(f"Failed to parse hotbar cache for namespace '{namespace}': {e}")
-                    
+        db = get_db()
+        if not db:
+            return "Error: Database connection not found."
+            
+        # 2. Check hotbar_cache first (O(1) hit)
+        async with db.execute("SELECT skills_list FROM hotbar_cache WHERE namespace = ?", (namespace,)) as cursor:
+            row = await cursor.fetchone()
+        if row:
+            try:
+                filepaths = json.loads(row[0])
+                logger.info(f"scan_shelf: O(1) Hotbar Cache Hit for namespace '{namespace}'")
+            except Exception as e:
+                logger.error(f"Failed to parse hotbar cache for namespace '{namespace}': {e}")
+                
         # 3. Fallback to querying the skills table if cache miss
         if not filepaths:
-            async with aiosqlite.connect(db_path) as db:
-                async with db.execute("SELECT filepath FROM skills WHERE namespace = ?", (namespace,)) as cursor:
-                    rows = await cursor.fetchall()
+            async with db.execute("SELECT filepath FROM skills WHERE namespace = ?", (namespace,)) as cursor:
+                rows = await cursor.fetchall()
             filepaths = [r[0] for r in rows]
             
         if not filepaths:
@@ -114,13 +121,11 @@ def create_scan_shelf_tool(db_path: str):
                     skill_name = path.parent.name
                     
                     # Log skill usage in database
-                    async with aiosqlite.connect(db_path) as db:
-                        await db.execute(
-                            "INSERT INTO skill_usage_logs (session_id, skill_name) VALUES (?, ?)",
-                            (session_id, skill_name)
-                        )
-                        await db.commit()
-                        
+                    await db.execute(
+                        "INSERT INTO skill_usage_logs (session_id, skill_name) VALUES (?, ?)",
+                        (session_id, skill_name)
+                    )
+                    
                     if keyword:
                         if keyword.lower() in content.lower():
                             results.append(f"--- Skill from {path.name} (Namespace: {namespace}) ---\n{content}")
@@ -130,15 +135,14 @@ def create_scan_shelf_tool(db_path: str):
                     results.append(f"Error reading skill {path.name}: {e}")
             else:
                 results.append(f"Skill file not found on disk: {filepath}")
-                
+        await db.commit()
+            
         if not results:
             if keyword:
                 return f"No skills on shelf '{namespace}' matched keyword '{keyword}'."
             return f"No readable skill files found on shelf '{namespace}'."
             
         return "\n\n".join(results)
-        
-    return scan_shelf
 
 async def librarian_rollover(state: LibrarianState):
     current_index = state.get("librarian_index") or 1
@@ -230,14 +234,14 @@ def compile_librarian_graph(db_path: str):
         
     def should_continue(state: LibrarianState):
         messages = state.get("search_messages") or []
-        # Loop guard: Max 3 tool execution attempts
-        tool_call_msgs = [m for m in messages if isinstance(m, AIMessage) and m.tool_calls]
-        if len(tool_call_msgs) >= 3:
-            logger.info("Librarian: Loop guard triggered. Forcing end of search.")
-            return END
-            
         last_message = messages[-1]
+        
         if last_message.tool_calls:
+            # Loop guard: Max 3 tool execution attempts
+            tool_call_msgs = [m for m in messages if isinstance(m, AIMessage) and m.tool_calls]
+            if len(tool_call_msgs) >= 3:
+                logger.info("Librarian: Loop guard triggered. Forcing end of search.")
+                return END
             return "tools"
         return END
         
@@ -252,7 +256,18 @@ def compile_librarian_graph(db_path: str):
         if not messages:
             return {"search_result": "No results."}
         last_message = messages[-1]
-        return {"search_result": last_message.content}
+        
+        # If the last message has tool calls (indicating loop guard or exit without tool run),
+        # combine the contents of all tool messages retrieved so far.
+        if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+            tool_results = []
+            for msg in messages:
+                if isinstance(msg, ToolMessage):
+                    tool_results.append(msg.content)
+            if tool_results:
+                return {"search_result": "\n\n".join(tool_results)}
+                
+        return {"search_result": last_message.content or "No results found."}
         
     workflow = StateGraph(LibrarianState)
     workflow.add_node("agent", call_llm)
@@ -383,6 +398,13 @@ async def manager_rollover(state: AgentState):
         "manager_index": current_index + 1
     }
 
+_librarian_graph_cache = {}
+
+def get_librarian_graph(db_path: str):
+    if db_path not in _librarian_graph_cache:
+        _librarian_graph_cache[db_path] = compile_librarian_graph(db_path)
+    return _librarian_graph_cache[db_path]
+
 async def call_librarian_subgraph(state: AgentState):
     messages = state.get("messages") or []
     last_message = messages[-1]
@@ -402,7 +424,7 @@ async def call_librarian_subgraph(state: AgentState):
     vault_path = Path.home() / "Documents" / "agentic-zen" / "contextnt"
     db_path = str(vault_path / "vault.db")
     
-    librarian_graph = compile_librarian_graph(db_path)
+    librarian_graph = get_librarian_graph(db_path)
     
     librarian_input = {
         "search_query": search_query,
@@ -429,6 +451,29 @@ async def call_librarian_subgraph(state: AgentState):
         "librarian_index": new_librarian_index
     }
 
+async def loop_guard_fallback(state: AgentState):
+    messages = state.get("messages") or []
+    # Find all ToolMessages to see what the Librarian returned
+    retrieved_info = []
+    for msg in messages:
+        if isinstance(msg, ToolMessage):
+            retrieved_info.append(msg.content)
+            
+    llm = get_llm()
+    fallback_prompt = (
+        "You are the Manager. You have searched the vault multiple times but hit the safety execution limit. "
+        "Based on the retrieved context below, please write a final response to the user's prompt: "
+        f"'{state.get('goal')}'\n\n"
+        "Retrieved Context:\n" + "\n\n".join(retrieved_info)
+    )
+    
+    response = await llm.ainvoke([
+        SystemMessage(content="You must formulate a final response based on the retrieved context."),
+        HumanMessage(content=fallback_prompt)
+    ])
+    
+    return {"messages": messages + [response]}
+
 # 6. Compile Manager Graph
 def compile_manager_graph(checkpointer=None):
     workflow = StateGraph(AgentState)
@@ -437,6 +482,7 @@ def compile_manager_graph(checkpointer=None):
     workflow.add_node("summarize_history", summarize_history)
     workflow.add_node("call_librarian_subgraph", call_librarian_subgraph)
     workflow.add_node("rollover", manager_rollover)
+    workflow.add_node("loop_guard_fallback", loop_guard_fallback)
     
     def route_start(state: AgentState):
         if state.get("turn_count", 0) >= 3:
@@ -450,13 +496,12 @@ def compile_manager_graph(checkpointer=None):
             
         last_message = messages[-1]
         
-        # Loop guard: Max 3 consult_librarian tool executions
-        tool_call_msgs = [m for m in messages if isinstance(m, AIMessage) and m.tool_calls]
-        if len(tool_call_msgs) >= 3:
-            logger.info("Manager: Loop guard triggered. Forcing end of task.")
-            return END
-            
         if last_message.tool_calls:
+            # Loop guard: Max 3 consult_librarian tool executions
+            tool_call_msgs = [m for m in messages if isinstance(m, AIMessage) and m.tool_calls]
+            if len(tool_call_msgs) >= 3:
+                logger.info("Manager: Loop guard triggered. Forcing end of task.")
+                return "loop_guard_fallback"
             return "call_librarian_subgraph"
         return END
         
@@ -470,10 +515,12 @@ def compile_manager_graph(checkpointer=None):
     workflow.add_conditional_edges("manager_agent", check_tokens_and_continue_manager, {
         "rollover": "rollover",
         "call_librarian_subgraph": "call_librarian_subgraph",
+        "loop_guard_fallback": "loop_guard_fallback",
         END: END
     })
     
     workflow.add_edge("rollover", "manager_agent")
     workflow.add_edge("call_librarian_subgraph", "manager_agent")
+    workflow.add_edge("loop_guard_fallback", END)
     
     return workflow.compile(checkpointer=checkpointer)

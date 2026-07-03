@@ -225,3 +225,183 @@ async def test_sqlite_wal_concurrency(tmp_path):
     tasks = [db_writer(i) for i in range(5)] + [db_reader() for _ in range(3)]
     # All tasks should execute without raising sqlite3.OperationalError (Database Locked)
     await asyncio.gather(*tasks)
+
+# 6. Test Multi-turn History Preservation (server level)
+@pytest.mark.asyncio
+async def test_multi_turn_history_preservation(tmp_path):
+    from src.server import DB_PATH, VAULT_PATH
+    import src.server as server
+    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+    
+    # Override server paths
+    server.VAULT_PATH = tmp_path / "agentic-zen" / "contextnt"
+    server.VAULT_PATH.mkdir(parents=True, exist_ok=True)
+    server.DB_PATH = str(server.VAULT_PATH / "vault.db")
+    
+    await init_db(server.DB_PATH)
+    
+    mock_resp_1 = AIMessage(content="Response to Turn 1.")
+    mock_resp_2 = AIMessage(content="Response to Turn 2.")
+    llm_mock = MockChatOpenAI(responses=[mock_resp_1, mock_resp_2])
+    
+    with patch("src.agents.get_llm", return_value=llm_mock):
+        session_id = "test_multi_turn_session"
+        
+        # Turn 1
+        res1 = await server.consult_contextnt("Turn 1 message", session_id=session_id)
+        assert res1["session_id"] == session_id
+        
+        # Verify checking state snapshot contains first turn messages
+        async with AsyncSqliteSaver.from_conn_string(server.DB_PATH) as checkpointer:
+            graph = compile_manager_graph(checkpointer=checkpointer)
+            config = {"configurable": {"thread_id": session_id}}
+            state = await graph.aget_state(config)
+            messages = state.values.get("messages", [])
+            assert len(messages) == 2
+            assert messages[0].content == "Turn 1 message"
+            assert messages[1].content == "Response to Turn 1."
+            
+        # Turn 2
+        res2 = await server.consult_contextnt("Turn 2 message", session_id=session_id)
+        
+        # Verify checkpointer now has Turn 1 and Turn 2 messages!
+        async with AsyncSqliteSaver.from_conn_string(server.DB_PATH) as checkpointer:
+            graph = compile_manager_graph(checkpointer=checkpointer)
+            config = {"configurable": {"thread_id": session_id}}
+            state = await graph.aget_state(config)
+            messages = state.values.get("messages", [])
+            assert len(messages) == 4
+            assert messages[0].content == "Turn 1 message"
+            assert messages[1].content == "Response to Turn 1."
+            assert messages[2].content == "Turn 2 message"
+            assert messages[3].content == "Response to Turn 2."
+
+# 7. Test Top-5 Caching, Ranking and Eviction
+@pytest.mark.asyncio
+async def test_top_5_ranking_and_eviction(tmp_path):
+    from src.overseer import overseer_loop
+    import json
+    
+    db_path = str(tmp_path / "vault.db")
+    await init_db(db_path)
+    
+    # Setup skills table with 6 namespaces, 5 skills each
+    async with aiosqlite.connect(db_path) as db:
+        for ns_idx in range(6):
+            ns_name = f"namespace_{ns_idx}"
+            for skill_idx in range(5):
+                skill_name = f"skill_{ns_idx}_{skill_idx}"
+                filepath = f"/path/to/{ns_name}/{skill_name}/SKILL.md"
+                await db.execute(
+                    "INSERT INTO skills (name, namespace, filepath) VALUES (?, ?, ?)",
+                    (skill_name, ns_name, filepath)
+                )
+        await db.commit()
+        
+    # Setup usage logs:
+    # We want namespace_0 to namespace_4 to have >= 10 sessions, >= 5 distinct days, and >= 5 skills used.
+    # Namespace_5 will have slightly less usage (e.g. only 9 sessions), so it will not make it.
+    async with aiosqlite.connect(db_path) as db:
+        # Loop to add log entries
+        # Namespace 0-4 get 10 sessions, 5 days, 5 skills used
+        for ns_idx in range(5):
+            for sess_idx in range(10):
+                session_id = f"session_{ns_idx}_{sess_idx}"
+                for day_idx in range(5):
+                    timestamp = f"2026-07-0{day_idx + 1} 12:00:00"
+                    for skill_idx in range(5):
+                        skill_name = f"skill_{ns_idx}_{skill_idx}"
+                        await db.execute(
+                            "INSERT INTO skill_usage_logs (session_id, skill_name, timestamp) VALUES (?, ?, ?)",
+                            (session_id, skill_name, timestamp)
+                        )
+        # Namespace 5 gets slightly less sessions (9 sessions) - not eligible
+        for sess_idx in range(9):
+            session_id = f"session_5_{sess_idx}"
+            for day_idx in range(5):
+                timestamp = f"2026-07-0{day_idx + 1} 12:00:00"
+                for skill_idx in range(5):
+                    skill_name = f"skill_5_{skill_idx}"
+                    await db.execute(
+                        "INSERT INTO skill_usage_logs (session_id, skill_name, timestamp) VALUES (?, ?, ?)",
+                        (session_id, skill_name, timestamp)
+                    )
+        await db.commit()
+        
+    shutdown_event = asyncio.Event()
+    # Trigger one run of the loop and then cancel/shutdown
+    # Mocking wait_for to immediately return
+    with patch("asyncio.wait_for", side_effect=asyncio.CancelledError()):
+        try:
+            await overseer_loop(db_path, tmp_path, shutdown_event)
+        except asyncio.CancelledError:
+            pass
+            
+    # Verify hotbar_cache contains only 5 namespaces (namespace_0 to namespace_4), not namespace_5
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute("SELECT namespace FROM hotbar_cache") as cursor:
+            rows = await cursor.fetchall()
+            namespaces = [r[0] for r in rows]
+            assert len(namespaces) == 5
+            for ns_idx in range(5):
+                assert f"namespace_{ns_idx}" in namespaces
+            assert "namespace_5" not in namespaces
+
+# 8. Test Manager Loop Guard Fallback Node
+@pytest.mark.asyncio
+async def test_manager_loop_guard_fallback(tmp_path):
+    db_path = tmp_path / "vault.db"
+    await init_db(str(db_path))
+    
+    # Mock a tool message and LLM fallback response
+    mock_tool_call_resp = AIMessage(
+        content="", 
+        tool_calls=[{"name": "consult_librarian", "args": {"search_query": "q4"}, "id": "tc4"}]
+    )
+    mock_fallback_resp = AIMessage(content="Final response compiled from context due to safety limit.")
+    llm_mock = MockChatOpenAI(responses=[mock_tool_call_resp, mock_fallback_resp])
+    
+    with patch("src.agents.get_llm", return_value=llm_mock):
+        from langgraph.checkpoint.memory import MemorySaver
+        memory = MemorySaver()
+        graph = compile_manager_graph(checkpointer=memory)
+        
+        config = {"configurable": {"thread_id": "test_session_loop_guard"}}
+        
+        # Construct messages list that has already executed 3 tool calls
+        # to trigger the loop guard on the next node step
+        inputs = {
+            "messages": [
+                HumanMessage(content="Query"),
+                AIMessage(content="", tool_calls=[{"name": "consult_librarian", "args": {"search_query": "q1"}, "id": "tc1"}]),
+                ToolMessage(content="Result 1", name="consult_librarian", tool_call_id="tc1"),
+                AIMessage(content="", tool_calls=[{"name": "consult_librarian", "args": {"search_query": "q2"}, "id": "tc2"}]),
+                ToolMessage(content="Result 2", name="consult_librarian", tool_call_id="tc2"),
+                AIMessage(content="", tool_calls=[{"name": "consult_librarian", "args": {"search_query": "q3"}, "id": "tc3"}]),
+                ToolMessage(content="Result 3", name="consult_librarian", tool_call_id="tc3"),
+            ],
+            "turn_count": 1,
+            "manager_index": 1,
+            "librarian_index": 1,
+            "goal": "Test loop guard fallback",
+            "session_id": "test_session_loop_guard"
+        }
+        
+        outputs = await graph.ainvoke(inputs, config)
+        
+        # Verify fallback response is appended to the message list
+        messages = outputs["messages"]
+        assert len(messages) == 9
+        assert messages[-1].content == "Final response compiled from context due to safety limit."
+
+# 9. Test Local Git Repository Initialization
+def test_init_obsidian_vault_local_init(tmp_path):
+    mock_home = tmp_path / "home_user"
+    mock_home.mkdir()
+    vault_path = mock_home / "Documents" / "agentic-zen" / "contextnt"
+    
+    with patch("pathlib.Path.home", return_value=mock_home):
+        # Run init
+        init_obsidian_vault(vault_path)
+        # Verify that a local git repo is initialized in vault_path
+        assert (vault_path / ".git").is_dir()

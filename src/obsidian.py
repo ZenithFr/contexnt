@@ -46,7 +46,17 @@ def init_obsidian_vault(vault_path: Path):
             logger.info(f"Appended {ignore_entry} to {gitignore_path}")
         except Exception as e:
             logger.error(f"Failed to modify parent .gitignore: {e}")
-
+    else:
+        # No parent Git found. Initialize a local git repository inside the vault path
+        # to protect against accidental deletion/modification as per Architecture Plan.
+        git_dir = vault_path / ".git"
+        if not git_dir.is_dir():
+            try:
+                import subprocess
+                subprocess.run(["git", "init"], cwd=str(vault_path), check=True, capture_output=True)
+                logger.info(f"Initialized local Git repository in vault: {vault_path}")
+            except Exception as e:
+                logger.error(f"Failed to initialize local Git repository in vault: {e}")
 async def write_context_payload(vault_path: Path, session_id: str, payload: str) -> Path:
     """Writes the active context payload to the Obsidian vault."""
     file_path = vault_path / f"active_context_{session_id}.md"

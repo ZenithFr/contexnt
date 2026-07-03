@@ -13,15 +13,15 @@ async def index_skills_on_startup(db_path: str, vault_path: Path):
     logger.info("Starting two-way skill sync...")
     
     found_skills = []
-    # 1. Upsert files found on disk
-    if vault_path.exists():
-        for md_file in vault_path.rglob("SKILL.md"):
-            namespace = md_file.parent.name
-            name = md_file.parent.name
-            filepath = str(md_file.resolve())
-            found_skills.append(filepath)
-            
-            async with aiosqlite.connect(db_path) as db:
+    async with aiosqlite.connect(db_path) as db:
+        # 1. Upsert files found on disk
+        if vault_path.exists():
+            for md_file in vault_path.rglob("SKILL.md"):
+                namespace = md_file.parent.name
+                name = md_file.parent.name
+                filepath = str(md_file.resolve())
+                found_skills.append(filepath)
+                
                 await db.execute("""
                     INSERT INTO skills (name, namespace, filepath)
                     VALUES (?, ?, ?)
@@ -29,10 +29,9 @@ async def index_skills_on_startup(db_path: str, vault_path: Path):
                         namespace=excluded.namespace,
                         filepath=excluded.filepath
                 """, (name, namespace, filepath))
-                await db.commit()
+            await db.commit()
                 
-    # 2. Delete stale records
-    async with aiosqlite.connect(db_path) as db:
+        # 2. Delete stale records
         async with db.execute("SELECT id, filepath FROM skills") as cursor:
             rows = await cursor.fetchall()
             
