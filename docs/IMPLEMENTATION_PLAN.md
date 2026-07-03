@@ -1,6 +1,6 @@
-# Context'nt 2.0 - Implementation Plan
+# Contex'nt 2.0 - Implementation Plan
 
-This document outlines the step-by-step technical implementation to build the 6-Layer Cognitive Architecture for Context'nt.
+This document outlines the step-by-step technical implementation to build the 6-Layer Cognitive Architecture for Contex'nt.
 
 ## Tech Stack
 - **Language:** Python 3.10+
@@ -41,7 +41,7 @@ Map bundles directly to namespaces in the `hotbar_cache` table for O(1) lookup s
 FastMCP tool updates `session_metadata`. The Overseer processes sessions idle > 600 seconds. After parsing the session, the Overseer explicitly deletes the temporary `active_context_{session_id}.md` to prevent Obsidian vault bloating.
 
 #### 10. Payload Handoff to Obsidian
-Large payloads write to `agentic-zen/contextnt/active_context_{session_id}.md`. The primary agent receives only `{ "path": str, "summary": str, "session_id": str }` so it can thread subsequent calls if the MCP server generated a new UUID session.
+Large payloads write to `agentic-zen/contexnt/active_context_{session_id}.md`. The primary agent receives only `{ "path": str, "summary": str, "session_id": str }` so it can thread subsequent calls if the MCP server generated a new UUID session.
 
 #### 11. Nested Git Repository Protection & Bound Traversal
 The Obsidian adapter skips local `git init` and appends to parent `.gitignore` if a root `.git` exists. The traversal search stops strictly at `~/` to prevent falsely detecting system-wide git directories. It also uses `mkdir(parents=True, exist_ok=True)` on first initialization to prevent `FileNotFoundError`.
@@ -126,8 +126,8 @@ CREATE INDEX IF NOT EXISTS idx_metadata_last_active ON session_metadata(last_act
    - Generates handoff message, writes to Obsidian, resets `messages`.
 
 ### Phase 4: MCP Exposure
-1. **Server Instantiation:** `mcp = FastMCP("Contextnt", lifespan=mcp_lifespan)`.
-2. **Tool Registration:** `@mcp.tool() async def consult_contextnt(prompt: str, session_id: str | None = None)`. Generate UUID if `None`.
+1. **Server Instantiation:** `mcp = FastMCP("Contexnt", lifespan=mcp_lifespan)`.
+2. **Tool Registration:** `@mcp.tool() async def consult_contexnt(prompt: str, session_id: str | None = None)`. Generate UUID if `None`.
 3. **Thread Config:** Maps `{"configurable": {"thread_id": session_id}}`.
 4. **Metadata Update:** Run `INSERT OR REPLACE INTO session_metadata`.
 5. **Payload Handoff:** Write payload to `active_context_{session_id}.md`, return `{path, summary, session_id}`.

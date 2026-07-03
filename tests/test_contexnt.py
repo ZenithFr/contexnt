@@ -35,7 +35,7 @@ def test_detect_parent_git(tmp_path):
     mock_home.mkdir()
     
     # Setup mock vault path
-    vault_path = mock_home / "Documents" / "agentic-zen" / "contextnt"
+    vault_path = mock_home / "Documents" / "agentic-zen" / "contexnt"
     vault_path.mkdir(parents=True)
     
     # Patch Path.home() to point to our mock_home
@@ -57,7 +57,7 @@ def test_detect_parent_git(tmp_path):
 def test_init_obsidian_vault_home_safety(tmp_path):
     mock_home = tmp_path / "home_user"
     mock_home.mkdir()
-    vault_path = mock_home / "Documents" / "agentic-zen" / "contextnt"
+    vault_path = mock_home / "Documents" / "agentic-zen" / "contexnt"
     
     # Git at home folder
     (mock_home / ".git").mkdir()
@@ -159,7 +159,7 @@ async def test_manager_token_rollover_and_caps(tmp_path):
         assert "archived" in outputs["messages"][1].content
         
         # File written in mock Obsidian
-        obsidian_dir = mock_home / "Documents" / "agentic-zen" / "contextnt"
+        obsidian_dir = mock_home / "Documents" / "agentic-zen" / "contexnt"
         dump_file = obsidian_dir / "manager_test_rollover_1_context.md"
         assert dump_file.exists()
         assert "Manager Handoff Context" in dump_file.read_text()
@@ -234,7 +234,7 @@ async def test_multi_turn_history_preservation(tmp_path):
     from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
     
     # Override server paths
-    server.VAULT_PATH = tmp_path / "agentic-zen" / "contextnt"
+    server.VAULT_PATH = tmp_path / "agentic-zen" / "contexnt"
     server.VAULT_PATH.mkdir(parents=True, exist_ok=True)
     server.DB_PATH = str(server.VAULT_PATH / "vault.db")
     
@@ -248,7 +248,7 @@ async def test_multi_turn_history_preservation(tmp_path):
         session_id = "test_multi_turn_session"
         
         # Turn 1
-        res1 = await server.consult_contextnt("Turn 1 message", session_id=session_id)
+        res1 = await server.consult_contexnt("Turn 1 message", session_id=session_id)
         assert res1["session_id"] == session_id
         
         # Verify checking state snapshot contains first turn messages
@@ -262,7 +262,7 @@ async def test_multi_turn_history_preservation(tmp_path):
             assert messages[1].content == "Response to Turn 1."
             
         # Turn 2
-        res2 = await server.consult_contextnt("Turn 2 message", session_id=session_id)
+        res2 = await server.consult_contexnt("Turn 2 message", session_id=session_id)
         
         # Verify checkpointer now has Turn 1 and Turn 2 messages!
         async with AsyncSqliteSaver.from_conn_string(server.DB_PATH) as checkpointer:
@@ -398,7 +398,7 @@ async def test_manager_loop_guard_fallback(tmp_path):
 def test_init_obsidian_vault_local_init(tmp_path):
     mock_home = tmp_path / "home_user"
     mock_home.mkdir()
-    vault_path = mock_home / "Documents" / "agentic-zen" / "contextnt"
+    vault_path = mock_home / "Documents" / "agentic-zen" / "contexnt"
     
     with patch("pathlib.Path.home", return_value=mock_home):
         # Run init

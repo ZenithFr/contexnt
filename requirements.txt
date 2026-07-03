@@ -1,0 +1,9 @@
+mcp
+fastmcp
+aiosqlite
+langgraph
+langchain-core
+langchain-openai
+tiktoken
+pytest
+pytest-asyncio

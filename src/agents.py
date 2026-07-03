@@ -14,7 +14,7 @@ from langgraph.graph import StateGraph, START, END
 logger = logging.getLogger(__name__)
 
 # Constants
-MAX_LIMIT = int(os.getenv("CONTEXTNT_MAX_LIMIT", 4000))
+MAX_LIMIT = int(os.getenv("CONTEXNT_MAX_LIMIT", 4000))
 TOKENIZER = tiktoken.get_encoding("cl100k_base")
 
 # 1. State Definitions
@@ -151,7 +151,7 @@ async def librarian_rollover(state: LibrarianState):
     if current_index >= 3:
         raise RuntimeError("Cognitive limits exceeded: Max Librarian Super Subs reached")
         
-    vault_path = Path.home() / "Documents" / "agentic-zen" / "contextnt"
+    vault_path = Path.home() / "Documents" / "agentic-zen" / "contexnt"
     vault_path.mkdir(parents=True, exist_ok=True)
     
     dump_content = f"# Librarian Handoff Context - Session {session_id} - Index {current_index}\n\n"
@@ -335,7 +335,7 @@ async def summarize_history(state: AgentState):
 async def call_manager_agent(state: AgentState):
     summary = state.get("summary") or ""
     system_prompt = (
-        "You are the Manager, the primary orchestrator of the Context'nt system.\n"
+        "You are the Manager, the primary orchestrator of the Contex'nt system.\n"
         "Your task is to coordinate with the Librarian to retrieve appropriate skills, "
         "format the context, and answer the user's prompt.\n"
     )
@@ -364,7 +364,7 @@ async def manager_rollover(state: AgentState):
     if current_index >= 5:
         raise RuntimeError("Cognitive limits exceeded: Max Manager Super Subs reached")
         
-    vault_path = Path.home() / "Documents" / "agentic-zen" / "contextnt"
+    vault_path = Path.home() / "Documents" / "agentic-zen" / "contexnt"
     vault_path.mkdir(parents=True, exist_ok=True)
     
     dump_content = f"# Manager Handoff Context - Session {session_id} - Index {current_index}\n\n"
@@ -383,7 +383,7 @@ async def manager_rollover(state: AgentState):
     )
     
     system_prompt = (
-        "You are the Manager, the primary orchestrator of the Context'nt system.\n"
+        "You are the Manager, the primary orchestrator of the Contex'nt system.\n"
         "Your task is to coordinate with the Librarian to retrieve appropriate skills, "
         "format the context, and answer the user's prompt."
     )
@@ -421,7 +421,7 @@ async def call_librarian_subgraph(state: AgentState):
     if not tool_call_id:
         return {}
         
-    vault_path = Path.home() / "Documents" / "agentic-zen" / "contextnt"
+    vault_path = Path.home() / "Documents" / "agentic-zen" / "contexnt"
     db_path = str(vault_path / "vault.db")
     
     librarian_graph = get_librarian_graph(db_path)

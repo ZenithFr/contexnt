@@ -1,4 +1,4 @@
-# Context'nt 2.0 - The 6-Layer Cognitive Architecture
+# Contex'nt 2.0 - The 6-Layer Cognitive Architecture
 
 This document defines the blueprint for an industry-grade, autonomous context management system built as an MCP server. It acts as an external brain for the primary agent (e.g., Hermes), completely insulating it from context exhaustion.
 
@@ -27,7 +27,7 @@ This document defines the blueprint for an industry-grade, autonomous context ma
 ### Layer 5: Cold Memory (Obsidian Archive)
 **Function:** Long-term session storage.
 **Contents:** Archival logs, exhausted agent contexts, and popped Hot Memories.
-**Mechanism:** Written directly to the default public Obsidian vault inside a dedicated `agentic-zen/contextnt/` folder. We will use a hidden Git repo on this folder to protect against accidental human deletion or modification.
+**Mechanism:** Written directly to the default public Obsidian vault inside a dedicated `agentic-zen/contexnt/` folder. We will use a hidden Git repo on this folder to protect against accidental human deletion or modification.
 
 ### Layer 6: The Overseer (Post-Processing Async Agent)
 **Function:** Continuous Improvement and Maintenance.

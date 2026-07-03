@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Core Paths
-VAULT_PATH = Path.home() / "Documents" / "agentic-zen" / "contextnt"
+VAULT_PATH = Path.home() / "Documents" / "agentic-zen" / "contexnt"
 DB_PATH = str(VAULT_PATH / "vault.db")
 
 # Global Shutdown Event
@@ -31,7 +31,7 @@ async def mcp_lifespan(app: FastMCP):
     """Lifecycle hook for Phase 1: Foundation and The Vault."""
     global overseer_task
     
-    logger.info("Initializing Context'nt FastMCP Server...")
+    logger.info("Initializing Contex'nt FastMCP Server...")
     
     # Phase 1.2: Obsidian Adapter Initialization
     init_obsidian_vault(VAULT_PATH)
@@ -57,13 +57,13 @@ async def mcp_lifespan(app: FastMCP):
     logger.info("Server shutdown complete.")
 
 # Instantiation
-mcp = FastMCP("Contextnt", lifespan=mcp_lifespan)
+mcp = FastMCP("Contexnt", lifespan=mcp_lifespan)
 
 # Phase 4.2: FastMCP Tool Registration
 @mcp.tool()
-async def consult_contextnt(prompt: str, session_id: Optional[str] = None) -> dict:
+async def consult_contexnt(prompt: str, session_id: Optional[str] = None) -> dict:
     """
-    Consults Context'nt to retrieve context payloads for a given prompt/session.
+    Consults Contex'nt to retrieve context payloads for a given prompt/session.
     If session_id is not provided, one is generated automatically.
     
     Returns a dictionary containing:

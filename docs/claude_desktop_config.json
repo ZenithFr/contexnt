@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "contexnt": {
+      "command": "python",
+      "args": ["-m", "src.server"],
+      "cwd": "/absolute/path/to/Contexnt",
+      "env": {
+        "OPENAI_API_KEY": "your-api-key-here"
+      }
+    }
+  }
+}
